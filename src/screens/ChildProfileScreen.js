@@ -101,7 +101,12 @@ export default function ChildProfileScreen({ route, navigation }) {
 
   /*Hjelpefunksjoner*/
 
-  const dateIdFromDate = (date) => date.toISOString().slice(0, 10); // YYYY-MM-DD
+  const dateIdFromDate = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`; // lokal YYYY-MM-DD
+  };
 
   const startOfDay = (d) =>
     new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -399,6 +404,8 @@ export default function ChildProfileScreen({ route, navigation }) {
   /* Status (ansatte) */
 
   const handleStatusChange = async (newStatus, action) => {
+    console.log("AUTH UID:", user?.uid);
+
     if (!isStaff || !child) return;
 
     try {
@@ -461,6 +468,15 @@ export default function ChildProfileScreen({ route, navigation }) {
 
   const handleSleepEnd = async () => {
     if (!isStaff || !child) return;
+
+    const currentDateId = dateIdFromDate(selectedDate);
+    if (child.sleepDateId !== currentDateId || !child.sleepStart) {
+      Alert.alert(
+        "Ikke startet",
+        "Du kan ikke avslutte søvn før den er startet for denne dagen."
+      );
+      return;
+    }
 
     try {
       const now = new Date();
