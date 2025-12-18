@@ -14,6 +14,8 @@ import DateTimePicker from "@react-native-community/datetimepicker";
 import * as ImagePicker from "expo-image-picker";
 import { useAuth } from "../store/AuthContext";
 import { db } from "../services/firebase";
+import { arrayUnion } from "firebase/firestore";
+import * as ImageManipulator from "expo-image-manipulator";
 import {
   doc,
   updateDoc,
@@ -625,15 +627,29 @@ export default function ChildProfileScreen({ route, navigation }) {
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.4,
-      base64: true,
+      quality: 1, // vi komprimerer etterpå
     });
 
     if (result.canceled) return null;
-    const asset = result.assets[0];
-    if (!asset.base64) return null;
+    const asset = result.assets?.[0];
+    if (!asset?.uri) return null;
 
-    return asset.base64;
+    // Resize + komprimer
+    const manipulated = await ImageManipulator.manipulateAsync(
+      asset.uri,
+      [{ resize: { width: 900 } }], // juster 700–1200 etter behov
+      { compress: 0.25, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+    );
+
+    const b64 = manipulated.base64 || null;
+
+    // Debug størrelse
+    if (b64) {
+      const approxBytes = Math.round(b64.length * 0.75);
+      console.log("base64 length:", b64.length, "approxBytes:", approxBytes);
+    }
+
+    return b64;
   };
 
   const handleChangeProfilePhoto = async () => {
@@ -641,6 +657,9 @@ export default function ChildProfileScreen({ route, navigation }) {
 
     try {
       const base64 = await pickImageAsBase64();
+      console.log("base64 length:", base64?.length);
+      console.log("approx bytes:", Math.round((base64?.length || 0) * 0.75)); // grovt estimat
+
       if (!base64) return;
 
       setUploadingProfilePhoto(true);
@@ -657,6 +676,52 @@ export default function ChildProfileScreen({ route, navigation }) {
       Alert.alert("Feil", "Kunne ikke lagre profilbildet. Prøv igjen senere.");
     } finally {
       setUploadingProfilePhoto(false);
+    }
+  };
+
+  const handleAddDayPhoto = async () => {
+    console.log(
+      "isStaff:",
+      isStaff,
+      "user uid:",
+      user?.uid,
+      "child:",
+      child?.id
+    );
+
+    if (!isStaff || !child) return;
+
+    try {
+      const base64 = await pickImageAsBase64();
+      if (!base64) return;
+
+      const dateId = dateIdFromDate(selectedDate);
+      const summaryId = `${child.group}_${dateId}`;
+      const summaryRef = doc(db, "daySummaries", summaryId);
+
+      // Lagre bildet i daySummaries
+      await setDoc(
+        summaryRef,
+        {
+          groupId: child.group,
+          dateId,
+          note: dayNote || "",
+          base64Photos: arrayUnion(base64),
+          updatedAt: serverTimestamp(),
+          updatedBy: user?.uid ?? null,
+        },
+        { merge: true }
+      );
+
+      // Oppdater UI umiddelbart
+      setDayPhotos((prev) => [...prev, base64]);
+      setDayUpdatedAt(new Date().toISOString());
+    } catch (err) {
+      console.warn("UPLOAD ERROR:", err?.code, err?.message, err);
+      Alert.alert(
+        "Feil",
+        `${err?.code || ""} ${err?.message || "Ukjent feil"}`
+      );
     }
   };
 
@@ -1043,6 +1108,15 @@ export default function ChildProfileScreen({ route, navigation }) {
         {/* Bilder fra dagen */}
         <View style={styles.section}>
           <Heading2 style={styles.sectionTitle}>Bilder fra dagen</Heading2>
+          {isStaff && (
+            <Button
+              title="Last opp bilde"
+              onPress={handleAddDayPhoto}
+              variant="secondary"
+              style={{ marginBottom: theme.spacing.s }}
+            />
+          )}
+
           {dayPhotos.length === 0 ? (
             <EmptyState
               title="Ingen bilder"
@@ -1322,11 +1396,13 @@ export default function ChildProfileScreen({ route, navigation }) {
         animationType="fade"
         onRequestClose={() => setDayReminderModalVisible(false)}
       >
+        {/* Backdrop: trykk utenfor for å lukke */}
         <Pressable
           style={styles.modalBackdrop}
           onPress={() => setDayReminderModalVisible(false)}
         >
-          <View style={styles.notifCard}>
+          {/* Innhold: fanger trykk så det IKKE lukker */}
+          <Pressable onPress={() => {}} style={styles.notifCard}>
             <Heading2 style={styles.notifTitle}>Dagspåminnelse</Heading2>
             <Body style={[styles.notifBody, { marginBottom: theme.spacing.s }]}>
               Kort beskjed mellom hjem og barnehage.
@@ -1343,7 +1419,7 @@ export default function ChildProfileScreen({ route, navigation }) {
             <View style={{ marginTop: theme.spacing.m }}>
               <Button title="Lagre" onPress={handleSaveDayReminder} />
             </View>
-          </View>
+          </Pressable>
         </Pressable>
       </Modal>
     </ScreenContainer>
